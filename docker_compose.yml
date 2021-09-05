@@ -1,0 +1,199 @@
+version: '3.8'
+
+volumes:
+  readsbpb_rrd:
+  readsbpb_autogain:
+
+  tar1090_heatmap:
+  tar1090_json:
+
+  radarbox_segfault_fix:
+    driver: local
+    driver_opts:
+      type: none
+      device: /opt/adsb/data/radarbox_segfault_fix
+      o: bind  
+
+services:
+  readsb:
+    image: mikenye/readsb-protobuf:latest
+    tty: true
+    container_name: readsb
+    hostname: readsb
+    restart: always
+    devices:
+      - /dev/bus/usb
+    ports:
+      - 8080:8080
+    environment:
+      - TZ=${FEEDER_TZ}
+      - READSB_DEVICE_TYPE=rtlsdr
+      - READSB_RTLSDR_DEVICE=00001000
+      - READSB_GAIN=autogain
+      - READSB_LAT=${FEEDER_LAT}
+      - READSB_LON=${FEEDER_LONG}
+      - READSB_RX_LOCATION_ACCURACY=2
+      - READSB_STATS_RANGE=true
+      - READSB_NET_ENABLE=true
+    volumes:
+      - readsbpb_rrd:/run/collectd
+      - readsbpb_autogain:/run/autogain
+
+  adsbx:
+    image: mikenye/adsbexchange:latest
+    tty: true
+    container_name: adsbx
+    restart: always
+    depends_on:
+      - readsb
+    environment:
+      - BEASTHOST=readsb
+      - LAT=${FEEDER_LAT}
+      - LONG=${FEEDER_LONG}
+      - ALT=${FEEDER_ALT_M}m
+      - SITENAME=${ADSBX_SITENAME}
+      - UUID=${ADSBX_UUID}
+      - TZ=${FEEDER_TZ}
+
+  piaware:
+    image: mikenye/piaware:latest
+    tty: true
+    container_name: piaware
+    restart: always
+    depends_on:
+      - readsb
+    ports:
+      - 8081:8080
+    environment:
+      - BEASTHOST=readsb
+      - LAT=${FEEDER_LAT}
+      - LONG=${FEEDER_LONG}
+      - TZ=${FEEDER_TZ}
+      - FEEDER_ID=${PIAWARE_FEEDER_ID}
+
+  fr24:
+    image: mikenye/fr24feed:latest
+    tty: true
+    container_name: fr24
+    restart: always
+    depends_on:
+      - readsb
+    ports:
+      - 8754:8754
+    environment:
+      - BEASTHOST=readsb
+      - TZ=${FEEDER_TZ}
+      - FR24KEY=${FR24_SHARING_KEY}
+      - MLAT=yes
+
+  rbfeeder:
+    image: mikenye/radarbox:latest
+    tty: true
+    container_name: rbfeeder
+    restart: always
+    depends_on:
+      - readsb
+    environment:
+      - BEASTHOST=readsb
+      - LAT=${FEEDER_LAT}
+      - LONG=${FEEDER_LONG}
+      - ALT=${FEEDER_ALT_M}
+      - TZ=${FEEDER_TZ}
+      - SHARING_KEY=${RADARBOX_SHARING_KEY}
+      - VERBOSE_LOGGING=true
+    tmpfs:
+      - /run:exec,size=64M
+      - /var/log
+    
+  pfclient:
+    image: mikenye/planefinder:latest
+    tty: true
+    container_name: pfclient
+    restart: always
+    ports:
+      - 30053:30053
+    environment:
+      - TZ=${FEEDER_TZ}
+      - BEASTHOST=readsb
+      - LAT=${FEEDER_LAT}
+      - LONG=${FEEDER_LONG}
+      - SHARECODE=${PLANEFINDER_SHARECODE}
+
+  adsbhub:
+    image: mikenye/adsbhub:latest
+    tty: true
+    container_name: adsbhub
+    restart: always
+    environment:
+      - TZ=${FEEDER_TZ}
+      - SBSHOST=readsb
+      - CLIENTKEY=${ADSBHUB_STATION_KEY}
+
+  opensky:
+    image: mikenye/opensky-network:latest
+    tty: true
+    container_name: opensky
+    restart: always
+    environment:
+      - TZ=${FEEDER_TZ}
+      - BEASTHOST=readsb
+      - LAT=${FEEDER_LAT}
+      - LONG=${FEEDER_LONG}
+      - ALT=${FEEDER_ALT_M}
+      - OPENSKY_USERNAME=${OPENSKY_USERNAME}
+      - OPENSKY_SERIAL=${OPENSKY_SERIAL}
+
+  tar1090:
+    image: mikenye/tar1090:latest
+    tty: true
+    container_name: tar1090
+    restart: always
+    environment:
+      - UPDATE_TAR1090=false
+      - TZ=${FEEDER_TZ}
+      - BEASTHOST=readsb
+      - LAT=${FEEDER_LAT}
+      - LONG=${FEEDER_LONG}
+      - TAR1090_DEFAULTCENTERLAT=${FEEDER_LAT}
+      - TAR1090_DEFAULTCENTERLON=${FEEDER_LONG}
+    ports:
+      - 8082:80
+    volumes:
+      - "tar1090_heatmap:/var/globe_history"
+      - "tar1090_json:/run/readsb"
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    tty: true
+    container_name: autoheal
+    restart: always
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    tty: true
+    container_name: watchtower
+    restart: always
+    environment:
+      - TZ=${FEEDER_TZ}
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=86400
+      - WATCHTOWER_ROLLING_RESTART=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      
+  zerotier:
+    image: bltavares/zerotier:latest
+    container_name: zerotier
+    restart: always
+    devices:
+     - /dev/net/tun
+    environment:
+     - net=host
+     - cap-add=NET_ADMIN
+     - cap-add=SYS_ADMIN
+    volumes:
+      - '/var/lib/zerotier-one:/var/lib/zerotier-one'
