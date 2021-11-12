@@ -1,0 +1,7 @@
+// from: https://tutorial.cytron.io/2019/12/25/getting-started-with-3-5-tft-touch-screen-using-raspberry-pi-4/
+
+sudo rm -rf LCD-show
+git clone https://github.com/goodtft/LCD-show.git
+chmod -R 755 LCD-show
+cd LCD-show/
+sudo ./LCD35-show
